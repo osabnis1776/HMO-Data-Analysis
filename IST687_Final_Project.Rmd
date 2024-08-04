@@ -1,0 +1,228 @@
+---
+title: "IST 687 Final Project"
+author: "Omkar Sabnis"
+date: "2022-12-03"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+#install.packages('rsconnect')
+library(rsconnect)
+```
+
+```{r}
+#Librarying all the required packages
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+#install.packages("rsample")
+#library(rsample)
+#install.packages("caret")
+#install.packages("kernlab")
+#install.packages("e1071")
+#install.packages("arules")
+#install.packages("arulesViz")
+#install.packages("imputeTS")
+#install.packages("rio")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+library(caret)
+library(kernlab)
+library(e1071)
+library(arules)
+library(arulesViz)
+library(imputeTS)
+library(rio)
+library(rpart)
+library(rpart.plot)
+#install.packages("shiny")
+#install.packages("shinydashboard")
+library(shiny)
+#library(shinydashboard)
+```
+
+
+```{r}
+library(tidyverse)
+# Loading the dataset
+data1 <- read_csv("https://intro-datascience.s3.us-east-2.amazonaws.com/HMO_data.csv")
+data <- data1
+head(data)
+```
+
+
+```{r}
+# Exploring the data
+view(data)
+str(data)
+summary(data)
+```
+
+
+
+```{r}
+# Performing Data Cleaning
+# Dealing with N/A values 
+colSums(is.na(data))
+anyNA(data)
+data$bmi<- na_interpolation(data$bmi)
+data$hypertension <- na_interpolation(data$hypertension)
+
+boxplot(data$cost)
+quartiles <- quantile(data$cost, probs=c(.25, .75), na.rm = FALSE)
+IQR <- IQR(data$cost)
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR 
+data <- subset(data, data$cost > Lower & data$cost < Upper)
+data$expensive <- data$cost > 5000
+
+```
+
+
+```{r}
+#Defining a variable "expensive" which has costs more than 4000 
+quantile(data$cost, probs = c(0.75))
+data$exp <- data$cost>4000
+# replacing TRUE with 1 and FALSE with 0
+data <- data %>% mutate(exp = str_replace_all( string = exp, pattern = "TRUE", "1"))
+data <- data %>% mutate(exp = str_replace_all( string = exp, pattern = "FALSE", "0"))
+data
+```
+
+```{r}
+#Adding the variables that are important for analysis in a new dataframe "HMO"
+HMO<- data.frame(age = data$age,
+                      bmi = data$bmi,
+                      smoker= data$smoker,
+                      yearly_physical= data$yearly_physical,
+                      exercise =data$exercise,
+                      hypertension = data$hypertension,
+                      exp=as.factor(data$exp))
+  
+#viewing the new data frame
+str(HMO)
+```
+
+```{r}
+# Dividing data into training set and testing sets
+trainL <- createDataPartition(y=HMO$exp,p=0.85,list=FALSE)
+trainS <- HMO[trainL,]
+testS <- HMO[-trainL,]
+dim(trainS)
+dim(testS)
+library(readr)
+library(data.table)
+write.csv(trainS, "C:\\Users\\omkar\\Desktop\\IST 687 Introduction to Data Science\\Final Project\\DATA To IMPORT\\trainset.csv", row.names=FALSE)
+write.csv(testS, "C:\\Users\\omkar\\Desktop\\IST 687 Introduction to Data Science\\Final Project\\DATA To IMPORT\\InputFile.csv", row.names=FALSE)
+```
+
+```{r}
+# Creating SVM model
+ksvm_model <- ksvm(data= trainS, exp~.,C=5, CV=3, prob.model= TRUE)
+SVMPred<- predict(ksvm_model,newdata= testS, type= "response")
+head(SVMPred)
+
+# Checking accuracy of ksvm model using confusion matrix
+confusionMatrix(SVMPred,testS$exp)
+```
+
+```{r}
+# Building a tree model
+rpart_model <- rpart(exp ~., data = trainS, method = "class")
+rpartPred <- predict(rpart_model, newdata= testS, type= "class")
+head(rpartPred)
+confusionMatrix(rpartPred, testS$exp)
+```
+
+```{r}
+# Linear model
+trainS$exp<-as.numeric(trainS$exp)
+testS$exp<-as.numeric(testS$exp)
+lmOut <- lm(exp~.,data=trainS)
+summary(lmOut)
+#predict(lmOut,testS,type = 'response')
+```
+
+
+
+
+```{r}
+#dividing expensive and inexpensive people into 2 subsets
+expPeople <- subset(data,exp=="1")
+inexpPeople <- subset(data,exp=="0") 
+head(expPeople)
+head(inexpPeople)
+```
+
+```{r}
+#Visualizations
+hist(expPeople$age)
+hist(inexpPeople$age)
+hist(data$bmi)
+hist(data$hypertension)
+hist(data$cost)
+```
+```{r}
+#Visualizations
+#Location by max cost in each state
+#Maps(Cost based on location)
+dfAgg <- data %>% group_by(location) %>% summarise(total_cost = max(cost))
+dfAgg$state <- tolower(dfAgg$location)
+us <- map_data("state")
+us$state <- us$region
+mergedNew <- merge(dfAgg,us,on = "state")
+mergedNew <- mergedNew[order(mergedNew$order),]
+map <- ggplot(mergedNew) + geom_polygon(aes(x = long, y = lat, group = group,fill = total_cost), color = "black") 
+map + scale_fill_continuous(low = "black", high = "purple", name = "total_cost", label = scales::comma) + coord_map() +ggtitle(" Mappping the maximum cost per state for the expensive and non expensive people")
+```
+```{r}
+#Visualizations
+#Location by Average age in each state
+dfAgg <- data %>% group_by(location) %>% summarise(avg_age= mean(age))
+dfAgg$state <- tolower(dfAgg$location)
+us <- map_data("state")
+us$state <- us$region
+mergedNew <- merge(dfAgg,us,on = "state")
+mergedNew <- mergedNew[order(mergedNew$order),]
+map <- ggplot(mergedNew) + geom_polygon(aes(x = long, y = lat, group = group,fill = avg_age), color = "black") 
+map + scale_fill_continuous(low = "white", high = "red", name = "avg_age", label = scales::comma) + coord_map() +ggtitle(" Mappping the maximum cost per state for the expensive and non expensive people")
+```
+```{r}
+#Visualizations
+
+boxplot(data$bmi)
+boxplot(data$age)
+boxplot(data$hypertension)
+boxplot(data$cost)
+```
+```{r}
+#Visualizations
+#scatter Plot age vs cost
+bmicost<- ggplot(data, aes(x=bmi,y=cost,color=location_type)) +geom_point()
+bmicost
+agecost<- ggplot(data, aes(x=age,y=cost,group=exercise)) +geom_point(aes(color=exercise)) + scale_color_manual(values=c('purple','black'))
+agecost
+
+```
+
+
+```{r}
+hist(expPeople$cost)
+hist(inexpPeople$cost)
+```
+
+```{r}
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(rmarkdown)
+library(knitr)
+library(pander)
+```
+
+
+
+
+
+
